@@ -98,7 +98,8 @@ void setup() {
   myFile = SD.open(filename, FILE_WRITE);
  
   if (myFile) {
-    Serial.print("Writing to "); Serial.print(filename); Serial.println("...");    
+    Serial.print("Writing to "); Serial.print(filename); Serial.println("...");
+    myFile.println("Temperature(°C), pressure(hPa), humidity(%), altitude(m)");    
 
     } else {
        
@@ -118,7 +119,7 @@ void loop() {
     Serial.println("Failed to perform reading :(");
     return;
   }
-  //temperature in C, pressure in hPa, humidity in %, altitude in m
+  //Write BME data. temperature in °C, pressure in hPa, humidity in %, altitude in m
   myFile.print(bme.temperature);
   myFile.print(",");
   myFile.print(bme.pressure / 100.0);
@@ -133,9 +134,10 @@ void loop() {
     the_key =  kpd.key[0].kchar;
     Serial.print("Just detected the "); Serial.print(the_key); Serial.println(" key.");
     if (the_key == '*') {
-      Serial.println("Data aquisition stopped from keyboard");
-      myFile.println("Data aquisition stopped from keyboard");
+      Serial.println("Data acquisition stopped from keyboard");
+      myFile.println("Data acquisition stopped from keyboard");
       myFile.close();
+      delay(100);
       exit(0);
     }
   }
