@@ -46,7 +46,9 @@ File myFile;
 char filename[ ] = "bme_and_time_data.txt";
 // instantiate a file system object
 SdFat SD;
-
+// used for file writing purposes, not related to the realtime clock.
+int timeCounter;
+char truncate[64];
 /////////////////////////// Keypad parameters ///////////////////////////
 // our keypad has four rows and three columns. since this will never change
 // while the program is runniong, declare these as constants so that they 
@@ -86,6 +88,8 @@ char last_key_char = NO_KEY;
 
 // instantiate a real time clock object named "rtc":
 RTC_DS3231 rtc;
+// instantiate a Date Time object named now
+DateTime now;
 
 // names of the days of the week:
 char daysOfTheWeek[7][4] = 
@@ -95,6 +99,10 @@ char daysOfTheWeek[7][4] =
 int RTC_hour, RTC_minute, RTC_second;
 int RTC_year, RTC_month, RTC_day_of_month;
 
+// used for time interval calculatino for measurement
+unsigned long startMillis;
+unsigned long currentMillis;
+const unsigned long period = 100;
 
 // have we already set the RTC clock from the GPS?
 bool already_set_RTC_from_GPS;
@@ -261,7 +269,7 @@ int GPS_satellites;
 
 String GPS_altitude_string;
 float GPS_altitude;
-
+int GPS_ready = -1;
 void setup() {
   Serial.begin(115200);
   while (!Serial);
@@ -273,25 +281,6 @@ void setup() {
 
   // delay a bit so I have time to see the display.
   delay(1000);
-  
-/////////////////////////// DS3231 real time clock  setup /////////////////////////
-  // turn on the RTC and check that it is talking to us.
-  /*if (! rtc.begin()) {
-    // uh oh, it's not talking to us.
-    LCD_message("DS3231 RTC", "unresponsive");
-    // delay 5 seconds so that user can read the display
-    delay(5000);  
-
-  } else {
-    if (rtc.lostPower()) {
-      LCD_message("DS3231 RTC lost", "power. Set to...");
-      // Set the RTC with an explicit date & time: September 1, 1988, 7:37:00 am
-      rtc.adjust(DateTime(2018, 10, 2, 7, 37, 0));
-    }
-  }  
-  // set flag that we haven't already set the RTC clock from the GPS
-  already_set_RTC_from_GPS = false;*/
-  //end of clock set up
   
 ////////////////////////////////// GPS setup //////////////////////////////
 
@@ -321,22 +310,62 @@ void setup() {
   // what the heck... let's try 5 Hz.
   // GPS.sendCommand(PMTK_SET_NMEA_UPDATE_1HZ); 
   // GPS.sendCommand(PMTK_SET_NMEA_UPDATE_2HZ); 
-  GPS.sendCommand(PMTK_SET_NMEA_UPDATE_5HZ); 
-  // GPS.sendCommand(PMTK_SET_NMEA_UPDATE_10HZ); 
+  // GPS.sendCommand(PMTK_SET_NMEA_UPDATE_5HZ); 
+  GPS.sendCommand(PMTK_SET_NMEA_UPDATE_10HZ); 
   
   // Request updates on antenna status, comment out to keep quiet.
   // GPS.sendCommand(PGCMD_ANTENNA);
 
   // Ask for firmware version, write this to the serial monitor. Comment out to keep quiet.
   // GPSSerial.println(PMTK_Q_RELEASE);
-  Serial.println(GPS_date_string);
+  // Serial.println(GPS_date_string);
+  Serial.println("Waiting for GPS...");
+  while (GPS_ready != 0) {
+    GPS_ready = GPS_query();
+  }
+  Serial.println("GPS_ready");
   delay(100);
   // end of GPS setup
+
+/////////////////////////// DS3231 real time clock  setup /////////////////////////
+  // turn on the RTC and check that it is talking to us.
+  if (! rtc.begin()) {
+    // uh oh, it's not talking to us.
+    LCD_message("DS3231 RTC", "unresponsive");
+    // delay 5 seconds so that user can read the display
+    delay(5000);  
+
+  } else {
+    if (rtc.lostPower()) {
+      LCD_message("DS3231 RTC lost", "power. Set to...");
+      // Set the RTC with an explicit date & time: September 1, 1988, 7:37:00 am
+      rtc.adjust(DateTime(2018, 10, 2, 7, 37, 0));
+    }
+  } 
+
+  // if we have GPS data and haven't yet set the RTC, set the clock now.
+  if( (GPS_hour != 0 or GPS_minutes != 0 or GPS_seconds != 0 or GPS_milliseconds != 0) ) {
+
+    // we have something coming in from the GPS, and haven't yet set the real time 
+    // clock, so set the RTC now using the last data sentence from the GPS. This isn't
+    // the most accurate way to do it, but it ought to get us within a second of the
+    // correct time.
+
+    // To set the RTC with an explicit date & time: September 1, 1988, 7:37:00 am do this:
+    // rtc.adjust(DateTime(1988, 9, 1, 7, 37, 0));
+    RTC_year = 2018;
+    RTC_month = 10;
+    RTC_day_of_month = 9;
+    rtc.adjust(DateTime(RTC_year, RTC_month, RTC_day_of_month,
+                        GPS_hour, GPS_minutes, GPS_seconds));
+  }
+  now = rtc.now();
+  //end of clock set up  
 
 /////////////////////////// BME setup /////////////////////////
   if (!bme.begin()) {
     Serial.println("Could not find a valid BME680 sensor, check wiring!");
-    while (1);
+    exit(0);
   }
   // Set up oversampling and filter initialization
   bme.setTemperatureOversampling(BME680_OS_8X);
@@ -375,7 +404,7 @@ void setup() {
     myFile.println("Data written below has such format:");
     myFile.println("hour(UTC), minute, second, millisecond");
     myFile.println("Temperature(°C), pressure(hPa), humidity(%), altitude(m)");   
-    myFile.println() 
+    myFile.println();
 
   } else {
        
@@ -385,19 +414,20 @@ void setup() {
     // delay a bit to give the serial port time to display the message...
     delay(100);
   }
+  startMillis = millis();
+  timeCounter = startMillis;
   //end of SD setup
 
 }
 
 void loop() {
-
-  GPS_query();
+  int testInterval;
   char the_key;
   // self-explanatory
   if (!bme.performReading()) {
     myFile.println("Failed to perform reading :(");
     Serial.println("Failed to perform reading :(");
-    return;
+    exit(0);
   }
 
   // Test GPS
@@ -407,36 +437,31 @@ void loop() {
   // Serial.print("   GPS_milliseconds = "); Serial.println(GPS_milliseconds);
   // delay(500);
 
-  // if we have GPS data and haven't yet set the RTC, set the clock now.
-  /*if( (GPS_hour != 0 or GPS_minutes != 0 or GPS_seconds != 0 or GPS_milliseconds != 0)
-      and !already_set_RTC_from_GPS) {
-
-    // we have something coming in from the GPS, and haven't yet set the real time 
-    // clock, so set the RTC now using the last data sentence from the GPS. This isn't
-    // the most accurate way to do it, but it ought to get us within a second of the
-    // correct time.
-
-    // To set the RTC with an explicit date & time: September 1, 1988, 7:37:00 am do this:
-    // rtc.adjust(DateTime(1988, 9, 1, 7, 37, 0));
-    rtc.adjust(DateTime(RTC_year, RTC_month, RTC_day_of_month,
-                        GPS_hour, GPS_minutes, GPS_seconds));
-    already_set_RTC_from_GPS = true;
-  }*/
 
   // Below to test RTC
   // talk to the realtime clock and print its information. note that unless you've 
   // synchronized the RTC and GPS, they won't necessarily agree.
   // DS3231_query();
-  // Serial.print("RTC_hour = "); Serial.print(RTC_hour);
-  // Serial.print("   RTC_minute = "); Serial.print(RTC_minute);
-  // Serial.print("   RTC_second = "); Serial.println(RTC_second);
+  // Serial.print("RTC_hour = "); Serial.print(rtc.now().hour());
+  // Serial.print("   RTC_minute = "); Serial.print(rtc.now().minute());
+  // Serial.print("   RTC_second = "); Serial.println(rtc.now().second());
   // delay(500);
   
+  // this is to make sure measurements are taking in 100ms intervals. Period = 100ms.
+  while (true) {
+    currentMillis = millis();
+    if (currentMillis - startMillis >= period) {
+      testInterval = currentMillis - startMillis;
+      startMillis = currentMillis;
+      break;
+    }
+  }
   // Write time data
-  myFile.print(GPS_hour); myFile.print(',');
-  myFile.print(GPS_minutes); myFile.print(',');
-  myFile.print(GPS_seconds); myFile.print(',');
-  myFile.println(GPS_milliseconds);
+  myFile.print(rtc.now().hour()); myFile.print(',');
+  myFile.print(rtc.now().minute()); myFile.print(',');
+  myFile.print(rtc.now().second()); myFile.print(',');
+  myFile.println(currentMillis % 1000);
+  //myFile.println(testInterval);
 
   // Write BME data. temperature in °C, pressure in hPa, humidity in %, altitude in m
   myFile.print(bme.temperature);
@@ -462,7 +487,7 @@ void loop() {
   }
 
   // Record data every 0.1s.
-  delay(100);
+  // delay(100);
 }
 
 //////////////////////////////////////////////////////////////////////
