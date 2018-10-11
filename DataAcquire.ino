@@ -277,7 +277,7 @@ void setup() {
  /////////////////////////// LCD setup ////////////////////////////
   // set up the LCD's number of columns and rows, then print a message:
   lcd.begin(16, 2);
-  LCD_message("P398DLP GPS data", "reader/parser   ");
+  LCD_message("LCD setup","");
 
   // delay a bit so I have time to see the display.
   delay(1000);
@@ -360,6 +360,8 @@ void setup() {
                         GPS_hour, GPS_minutes, GPS_seconds));
   }
   now = rtc.now();
+  LCD_message("GPS setup done","");
+  delay(500);
   //end of clock set up  
 
 /////////////////////////// BME setup /////////////////////////
@@ -373,6 +375,8 @@ void setup() {
   bme.setPressureOversampling(BME680_OS_4X);
   bme.setIIRFilterSize(BME680_FILTER_SIZE_3);
   bme.setGasHeater(320, 150); // 320*C for 150 ms
+  LCD_message("BME setup done","");
+  delay(500);
   //end of BME setup
 
 /////////////////////////// SD Card setup /////////////////////////
@@ -416,6 +420,8 @@ void setup() {
   }
   startMillis = millis();
   timeCounter = startMillis;
+  LCD_message("Start","measurement");
+  delay(500);
   //end of SD setup
 
 }
